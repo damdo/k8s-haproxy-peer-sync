@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"log"
+	"os"
 	"path/filepath"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -30,13 +31,21 @@ func main() {
 	//	panic(err.Error())
 	//}
 
+	var service = flag.String("service", "", "")
+
 	var kubeconfig *string
 	if home := homedir.HomeDir(); home != "" {
 		kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
 	} else {
 		kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
 	}
+
 	flag.Parse()
+
+	if *service == "" {
+		flag.Usage()
+		os.Exit(1)
+	}
 
 	// use the current context in kubeconfig
 	config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
@@ -56,14 +65,14 @@ func main() {
 	stopper := make(chan struct{})
 	defer close(stopper)
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
-		//AddFunc: func(obj interface{}) {
-		//	mObj := obj.(v1.Object)
-		//	log.Printf("ES added: %s", mObj.GetName())
-		//},
-		//DeleteFunc: func(obj interface{}) {
-		//	mObj := obj.(v1.Object)
-		//	log.Printf("ES deleted: %s", mObj.GetName())
-		//},
+		AddFunc: func(obj interface{}) {
+			mObj := obj.(*discoveryv1.EndpointSlice)
+			log.Printf("ES added: %s", mObj.GetName())
+		},
+		DeleteFunc: func(obj interface{}) {
+			mObj := obj.(*discoveryv1.EndpointSlice)
+			log.Printf("ES deleted: %s", mObj.GetName())
+		},
 		UpdateFunc: func(oldObj, obj interface{}) {
 			mObj := obj.(*discoveryv1.EndpointSlice)
 			log.Printf("ES updated: %s", mObj.GetName())

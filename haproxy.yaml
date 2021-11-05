@@ -1,0 +1,157 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: default
+  name: haproxy
+data:
+  haproxy.cfg: |
+    global
+      log stdout format raw local0
+      stats socket /tmp/admin.sock mode 600 level admin expose-fd listeners
+      stats timeout 30s
+
+    defaults
+      log global
+      mode  http
+      option  httplog
+      option  dontlognull
+      option  redispatch
+      timeout connect 5000
+      timeout client  500000
+      timeout server  500000
+
+    resolvers k8s
+      parse-resolv-conf
+      hold other 10s
+      hold refused 10s
+      hold nx 10s
+      hold timeout 10s
+      hold valid 10s
+      hold obsolete 10s
+
+    userlist haproxy-dataplaneapi
+      user admin insecure-password mypassword
+
+    # we enable the DataPlaneAPI to allow us managing the HAProxy configuration dynamically via HTTP REST APIs
+    # docs: https://www.haproxy.com/documentation/dataplaneapi/enterprise/
+    # dataplaneapi usage: https://github.com/haproxytech/dataplaneapi
+    program api
+      command sh -c "HAPROXY_CFGFILES='' /usr/bin/dataplaneapi -f=/etc/haproxy/dataplaneapi.hcl"
+      # avoids restarting the DataPlaneAPI each time HAProxy reloads
+      no option start-on-reload
+
+    frontend front-session
+      bind 0.0.0.0:8080
+      option httplog
+      default_backend back-session
+
+    backend back-session
+      balance uri depth 4
+      hash-type consistent djb2
+
+      stick-table type string len 32 size 1M srvkey addr
+      stick match capture.req.uri,field(4,/)
+      stick store-response capture.req.uri,field(4,/)
+
+      #option httpchk GET /
+
+      # see: http://cbonte.github.io/haproxy-dconv/2.4/configuration.html#4-server-template
+      server-template srv 2 sticky-backend.default.svc.cluster.local:8080 check inter 1s resolvers k8s init-addr none
+  dataplaneapi.hcl: |
+    dataplaneapi {
+      host = "0.0.0.0"
+      port = 5555
+
+      user "admin" {
+        insecure = true
+        password = "a1db9e7de13e2552fe95fc2f8e9f45b3513e1b22"
+      }
+    }
+
+    haproxy {
+      config_file = "/etc/haproxy/haproxy.cfg"
+      haproxy_bin = "/usr/local/sbin/haproxy"
+
+      reload {
+        reload_delay = 1
+        reload_cmd  = "kill -SIGUSR2 1"
+        restart_cmd = "kill -SIGUSR2 1"
+      }
+    }
+
+    log_targets = [
+      {
+        log_level = "trace"
+      },
+    ]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: default
+  name: haproxy
+  labels:
+    app: haproxy
+    tier: backend
+spec:
+  type: ClusterIP
+  clusterIP: None
+  ports:
+  - name: haproxy
+    port: 8080
+    protocol: TCP
+    targetPort: 8080
+  selector:
+    app: haproxy
+    tier: backend
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  namespace: default
+  name: haproxy
+  labels:
+    app: haproxy
+    tier: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: haproxy
+      tier: backend
+  template:
+    metadata:
+      labels:
+        app: haproxy
+        tier: backend
+    spec:
+      initContainers:
+      - name: copy
+        image: busybox
+        command: ["sh", "-c", "cp /source/* /etc/haproxy"]
+        volumeMounts:
+        - mountPath: /source
+          name: haproxy-config-ro-volume
+        - mountPath: /etc/haproxy
+          name: haproxy-config-rw-volume
+      containers:
+      #- name: haproxy-peer-sync
+      #  image: "damdo/k8s-haproxy-peer-sync:0.0.1"
+      #  command: ["./k8s-haproxy-peer-sync, "--service=haproxy"]
+      - name: haproxy
+        # the haproxytech version of haproxy already has the DataplaneAPI built in
+        image: "haproxytech/haproxy-alpine:2.4.8"
+        ports:
+        - containerPort: 8080
+        - containerPort: 5555
+        volumeMounts:
+          - mountPath: /etc/haproxy
+            name: haproxy-config-rw-volume
+            readOnly: false
+      volumes:
+        - name: haproxy-config-rw-volume
+          emptyDir: {}
+        - configMap:
+            name: haproxy
+            defaultMode: 0777
+          name: haproxy-config-ro-volume
