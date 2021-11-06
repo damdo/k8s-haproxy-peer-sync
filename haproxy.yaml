@@ -29,9 +29,6 @@ data:
       hold valid 10s
       hold obsolete 10s
 
-    userlist haproxy-dataplaneapi
-      user admin insecure-password mypassword
-
     # we enable the DataPlaneAPI to allow us managing the HAProxy configuration dynamically via HTTP REST APIs
     # docs: https://www.haproxy.com/documentation/dataplaneapi/enterprise/
     # dataplaneapi usage: https://github.com/haproxytech/dataplaneapi
@@ -52,16 +49,14 @@ data:
       stick-table type string len 32 size 1M srvkey addr
       stick match capture.req.uri,field(4,/)
       stick store-response capture.req.uri,field(4,/)
-
       #option httpchk GET /
-
       # see: http://cbonte.github.io/haproxy-dconv/2.4/configuration.html#4-server-template
       server-template srv 2 sticky-backend.default.svc.cluster.local:8080 check inter 1s resolvers k8s init-addr none
+
   dataplaneapi.hcl: |
     dataplaneapi {
-      host = "0.0.0.0"
+      host = "127.0.0.1"
       port = 5555
-
       user "admin" {
         insecure = true
         password = "a1db9e7de13e2552fe95fc2f8e9f45b3513e1b22"
@@ -71,7 +66,6 @@ data:
     haproxy {
       config_file = "/etc/haproxy/haproxy.cfg"
       haproxy_bin = "/usr/local/sbin/haproxy"
-
       reload {
         reload_delay = 1
         reload_cmd  = "kill -SIGUSR2 1"
@@ -88,8 +82,8 @@ data:
 apiVersion: v1
 kind: Service
 metadata:
-  namespace: default
   name: haproxy
+  namespace: default
   labels:
     app: haproxy
     tier: backend
@@ -108,8 +102,8 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  namespace: default
   name: haproxy
+  namespace: default
   labels:
     app: haproxy
     tier: backend
@@ -142,7 +136,7 @@ spec:
         - "--service=haproxy"
         - "--namespace=default"
         - "--user=admin"
-        - "--password=admin"
+        - "--password=a1db9e7de13e2552fe95fc2f8e9f45b3513e1b22"
         - "--data-plane-api-address=127.0.0.1:5555"
         - "--peer-port=3000"
         - "--peer-section-name=haproxy-peers"
@@ -159,7 +153,6 @@ spec:
       volumes:
         - name: haproxy-config-rw-volume
           emptyDir: {}
-        - configMap:
+        - name: haproxy-config-ro-volume
+          configMap:
             name: haproxy
-            defaultMode: 0777
-          name: haproxy-config-ro-volume
