@@ -135,9 +135,17 @@ spec:
         - mountPath: /etc/haproxy
           name: haproxy-config-rw-volume
       containers:
-      #- name: haproxy-peer-sync
-      #  image: "damdo/k8s-haproxy-peer-sync:0.0.1"
-      #  command: ["./k8s-haproxy-peer-sync, "--service=haproxy"]
+      - name: haproxy-peer-sync
+        image: "damdo/k8s-haproxy-peer-sync:0.0.1"
+        command:
+        - ./k8s-haproxy-peer-sync
+        - "--service=haproxy"
+        - "--namespace=default"
+        - "--user=admin"
+        - "--password=admin"
+        - "--data-plane-api-address=127.0.0.1:5555"
+        - "--peer-port=3000"
+        - "--peer-section-name=haproxy-peers"
       - name: haproxy
         # the haproxytech version of haproxy already has the DataplaneAPI built in
         image: "haproxytech/haproxy-alpine:2.4.8"
