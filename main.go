@@ -87,6 +87,7 @@ func main() {
 				addrs = append(addrs, v.Addresses[0])
 			}
 			log.Printf("ES updated: %s %#v", mObj.GetName(), addrs)
+			updateHaproxy(addrs)
 		},
 	})
 
@@ -96,8 +97,20 @@ func main() {
 func updateHaproxy(addrs []string) {
 	client := &http.Client{}
 
+	body := []byte(fmt.Sprintf(`{"name": "%s"}`, *peerSectionName))
+	req, err := http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/services/haproxy/configuration/peer_section", bytes.NewReader(body))
+	if err != nil {
+		log.Println(err)
+	}
+	req.SetBasicAuth(*user, *password)
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Println(err)
+	}
+	log.Printf("peer_section: %s creation, got %d status code\n", *peerSectionName, resp.StatusCode)
+
 	for _, addr := range addrs {
-		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, hostname, addr, peersPort))
+		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, hostname, addr, *peersPort))
 		req, err := http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/services/haproxy/configuration/peer_entries", bytes.NewReader(body))
 		if err != nil {
 			log.Println(err)
@@ -107,9 +120,10 @@ func updateHaproxy(addrs []string) {
 		q.Add("peer_section", *peerSectionName)
 		req.URL.RawQuery = q.Encode()
 
-		_, err = client.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			log.Println(err)
 		}
+		log.Printf("peer_entries: (%s:%d) creation, got %d status code\n", addr, *peersPort, resp.StatusCode)
 	}
 }
