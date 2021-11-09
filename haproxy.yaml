@@ -63,6 +63,9 @@ data:
       hold valid 10s
       hold obsolete 10s
 
+    peers haproxy-peers
+      peer "$HOSTNAME" "$MY_POD_IP":3000
+
     # we enable the DataPlaneAPI to allow us managing the HAProxy configuration dynamically via HTTP REST APIs
     # docs: https://www.haproxy.com/documentation/dataplaneapi/enterprise/
     # dataplaneapi usage: https://github.com/haproxytech/dataplaneapi
@@ -80,7 +83,7 @@ data:
       balance uri depth 4
       hash-type consistent djb2
 
-      stick-table type string len 32 size 1M srvkey addr
+      stick-table type string len 32 size 1M peers haproxy-peers srvkey addr
       stick match capture.req.uri,field(4,/)
       stick store-response capture.req.uri,field(4,/)
       #option httpchk GET /
@@ -175,6 +178,11 @@ spec:
         - "--data-plane-api-address=127.0.0.1:5555"
         - "--peer-port=3000"
         - "--peer-section-name=haproxy-peers"
+        env:
+        - name: MY_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
       - name: debug
         image: "damdo/utilpine:3.14.2-20211023173401-4921f56"
         command:
@@ -183,6 +191,11 @@ spec:
       - name: haproxy
         # the haproxytech version of haproxy already has the DataplaneAPI built in
         image: "haproxytech/haproxy-alpine:2.4.8"
+        env:
+        - name: MY_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         ports:
         - containerPort: 8080
         - containerPort: 5555
@@ -190,10 +203,6 @@ spec:
           - mountPath: /etc/haproxy
             name: haproxy-config-rw-volume
             readOnly: false
-        lifecycle:
-          postStart:
-            exec:
-              command: ["/bin/sh", "-c", "sleep 10"]
       volumes:
         - name: haproxy-config-rw-volume
           emptyDir: {}

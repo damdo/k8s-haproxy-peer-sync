@@ -250,11 +250,14 @@ func updateHaproxy(desired []string, deletions []string) {
 
 	for _, addr := range desired {
 		var hostname string
+
 		if addr == myIPv4Address {
-			hostname = localHostname
-		} else {
-			hostname = hex.EncodeToString([]byte(b64.StdEncoding.EncodeToString([]byte(addr))))
+			// we don't want to modify the local entry
+			// (already present in the runtime config)
+			continue
 		}
+
+		hostname = hex.EncodeToString([]byte(b64.StdEncoding.EncodeToString([]byte(addr))))
 
 		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, hostname, addr, *peersPort)
 		body := []byte(bodyStr)
@@ -279,10 +282,12 @@ func updateHaproxy(desired []string, deletions []string) {
 	for _, addr := range deletions {
 		var hostname string
 		if addr == myIPv4Address {
-			hostname = localHostname
-		} else {
-			hostname = hex.EncodeToString([]byte(b64.StdEncoding.EncodeToString([]byte(addr))))
+			// we don't want to modify the local entry
+			// (already present in the runtime config)
+			continue
 		}
+
+		hostname = hex.EncodeToString([]byte(b64.StdEncoding.EncodeToString([]byte(addr))))
 
 		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, hostname, addr, *peersPort)
 		body := []byte(bodyStr)
@@ -315,7 +320,6 @@ func updateHaproxy(desired []string, deletions []string) {
 	if err != nil {
 		log.Println(err)
 	}
-	log.Printf("transaction: COMMIT transaction_id='%s', status_code=%d\n", transactionID, resp.StatusCode)
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
@@ -324,4 +328,5 @@ func updateHaproxy(desired []string, deletions []string) {
 	if err := json.Unmarshal(body, &resultMap.X); err != nil {
 		panic(err)
 	}
+	log.Printf("transaction: COMMIT transaction_id='%s', status_code=%d, result=%#v\n", transactionID, resp.StatusCode, resultMap.X)
 }
