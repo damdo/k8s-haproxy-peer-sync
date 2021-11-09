@@ -31,7 +31,6 @@ var password = flag.String("password", "", "")
 var dataPlaneAPIAddress = flag.String("data-plane-api-address", "127.0.0.1:5555", "")
 var peerSectionName = flag.String("peer-section-name", "haproxy-peers", "")
 var peersPort = flag.Int("peer-port", 3000, "")
-var localHostname string = os.Getenv("HOSTNAME")
 var myIPv4Address string
 
 func main() {

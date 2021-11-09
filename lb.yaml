@@ -39,7 +39,7 @@ data:
       #option httpchk GET /
 
       # see: http://cbonte.github.io/haproxy-dconv/2.4/configuration.html#4-server-template
-      server-template srv 2 haproxy.channels.svc.cluster.local:8080 check inter 1s resolvers k8s init-addr none
+      server-template srv 3 haproxy.default.svc.cluster.local:8080 check inter 1s resolvers k8s init-addr none
 ---
 apiVersion: v1
 kind: Service
@@ -57,7 +57,7 @@ spec:
     targetPort: 8080
     nodePort: 30030
   selector:
-    app: haproxy
+    app: lb
     tier: backend
 ---
 apiVersion: apps/v1

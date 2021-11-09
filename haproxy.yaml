@@ -43,6 +43,7 @@ data:
       log stdout format raw local0
       stats socket /tmp/admin.sock mode 600 level admin expose-fd listeners
       stats timeout 30s
+      master-worker
 
     defaults
       log global
@@ -64,7 +65,8 @@ data:
       hold obsolete 10s
 
     peers haproxy-peers
-      peer "$HOSTNAME" "$MY_POD_IP":3000
+      #peer "$HOSTNAME" "$MY_POD_IP":3000
+      peer "$HAPROXY_PEERNAME" 0.0.0.0:3000
 
     # we enable the DataPlaneAPI to allow us managing the HAProxy configuration dynamically via HTTP REST APIs
     # docs: https://www.haproxy.com/documentation/dataplaneapi/enterprise/
@@ -88,7 +90,7 @@ data:
       stick store-response capture.req.uri,field(4,/)
       #option httpchk GET /
       # see: http://cbonte.github.io/haproxy-dconv/2.4/configuration.html#4-server-template
-      server-template srv 2 sticky-backend.default.svc.cluster.local:8080 check inter 1s resolvers k8s init-addr none
+      server-template srv 3 sticky-backend.default.svc.cluster.local:80 check inter 1s resolvers k8s init-addr none
 
   dataplaneapi.hcl: |
     dataplaneapi {
@@ -160,7 +162,12 @@ spec:
       initContainers:
       - name: copy
         image: busybox
-        command: ["sh", "-c", "cp /source/* /etc/haproxy"]
+        command: ["sh", "-c", 'cp /source/* /etc/haproxy && echo -n "$MY_POD_IP" | base64 | xxd -p -l 16 | tr -d "[:blank:]" > /etc/haproxy/peername']
+        env:
+        - name: MY_POD_IP
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
         volumeMounts:
         - mountPath: /source
           name: haproxy-config-ro-volume
@@ -191,6 +198,8 @@ spec:
       - name: haproxy
         # the haproxytech version of haproxy already has the DataplaneAPI built in
         image: "haproxytech/haproxy-alpine:2.4.8"
+        command: ["/bin/sh","-c"]
+        args: [ 'export HAPROXY_PEERNAME="$(cat /etc/haproxy/peername | tr -d "\n")" && haproxy -L "$(cat /etc/haproxy/peername | tr -d "\n")" -f /usr/local/etc/haproxy/haproxy.cfg' ]
         env:
         - name: MY_POD_IP
           valueFrom:
@@ -199,6 +208,7 @@ spec:
         ports:
         - containerPort: 8080
         - containerPort: 5555
+        - containerPort: 3000
         volumeMounts:
           - mountPath: /etc/haproxy
             name: haproxy-config-rw-volume
