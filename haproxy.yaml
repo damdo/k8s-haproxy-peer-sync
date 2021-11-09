@@ -175,6 +175,11 @@ spec:
         - "--data-plane-api-address=127.0.0.1:5555"
         - "--peer-port=3000"
         - "--peer-section-name=haproxy-peers"
+      - name: debug
+        image: "damdo/utilpine:3.14.2-20211023173401-4921f56"
+        command:
+        - sleep
+        - infinity
       - name: haproxy
         # the haproxytech version of haproxy already has the DataplaneAPI built in
         image: "haproxytech/haproxy-alpine:2.4.8"
@@ -185,6 +190,10 @@ spec:
           - mountPath: /etc/haproxy
             name: haproxy-config-rw-volume
             readOnly: false
+        lifecycle:
+          postStart:
+            exec:
+              command: ["/bin/sh", "-c", "sleep 10"]
       volumes:
         - name: haproxy-config-rw-volume
           emptyDir: {}
