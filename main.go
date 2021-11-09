@@ -129,12 +129,9 @@ func main() {
 				//}
 			}
 
-			log.Printf("addrs: %#v, oldAddrs: %#v\n", addrs, oldAddrs)
-
 			toRemove := difference(oldAddrs, addrs)
+			log.Printf("ES updated: '%s', desired: %#v, deletions: %#v\n", mObj.GetName(), addrs, toRemove)
 
-			log.Printf("ES updated: %s %#v", mObj.GetName(), addrs)
-			log.Printf("desired: %#v, toRemove: %#v\n", addrs, toRemove)
 			updateHaproxy(addrs, toRemove)
 		},
 	})
@@ -185,7 +182,6 @@ func difference(a, b []string) []string {
 }
 
 func updateHaproxy(desired []string, deletions []string) {
-	log.Println("calling updateHaproxy..")
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/version", nil)
@@ -208,13 +204,6 @@ func updateHaproxy(desired []string, deletions []string) {
 	if err := json.Unmarshal(body, &version); err != nil {
 		panic(err)
 	}
-	//if n, ok := result.(int); ok {
-	//	version = int(n)
-	//} else {
-	//	panic(err)
-	//}
-
-	log.Println("version: ", version)
 
 	req, err = http.NewRequest("POST", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions?version=%d", version), nil)
 	if err != nil {
@@ -226,9 +215,6 @@ func updateHaproxy(desired []string, deletions []string) {
 	if err != nil {
 		log.Println(err)
 	}
-
-	log.Printf("req2: resp %#v\n", resp)
-	log.Printf("transaction: creation: got %d status code\n", resp.StatusCode)
 
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -244,7 +230,9 @@ func updateHaproxy(desired []string, deletions []string) {
 	} else {
 		panic(err)
 	}
-	log.Println("transaction: ", transactionID)
+
+	log.Println("transaction: starting transaction against HAProxy DataPlane API")
+	log.Printf("transaction: CREATION, version=%d, transaction_id='%s', status_code=%d\n", version, transactionID, resp.StatusCode)
 
 	// create requests
 	body = []byte(fmt.Sprintf(`{"name": "%s"}`, *peerSectionName))
@@ -258,7 +246,7 @@ func updateHaproxy(desired []string, deletions []string) {
 	if err != nil {
 		log.Println(err)
 	}
-	log.Printf("peer_section: %s creation, got %d status code\n", *peerSectionName, resp.StatusCode)
+	log.Printf("peer_section: '%s' CREATION, status_code=%d\n", *peerSectionName, resp.StatusCode)
 
 	for _, addr := range desired {
 		var hostname string
@@ -285,7 +273,7 @@ func updateHaproxy(desired []string, deletions []string) {
 		if err != nil {
 			log.Println(err)
 		}
-		log.Printf("peer_entries: (%s:%d) CREATION with body : %#v, got %d status code\n", addr, *peersPort, bodyStr, resp.StatusCode)
+		log.Printf("peer_entries: 'peer %s %s:%d' CREATION, status_code=%d\n", hostname, addr, *peersPort, resp.StatusCode)
 	}
 
 	for _, addr := range deletions {
@@ -313,7 +301,7 @@ func updateHaproxy(desired []string, deletions []string) {
 		if err != nil {
 			log.Println(err)
 		}
-		log.Printf("peer_entries: (%s:%d) DELETION with body : %#v, got %d status code\n", addr, *peersPort, bodyStr, resp.StatusCode)
+		log.Printf("peer_entries: 'peer %s %s:%d' DELETION, status_code=%d\n", hostname, addr, *peersPort, resp.StatusCode)
 	}
 
 	// commit: /services/haproxy/transactions/{id}
@@ -327,7 +315,7 @@ func updateHaproxy(desired []string, deletions []string) {
 	if err != nil {
 		log.Println(err)
 	}
-	log.Printf("transaction: commit: got %d status code\n", resp.StatusCode)
+	log.Printf("transaction: COMMIT transaction_id='%s', status_code=%d\n", transactionID, resp.StatusCode)
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
@@ -336,6 +324,4 @@ func updateHaproxy(desired []string, deletions []string) {
 	if err := json.Unmarshal(body, &resultMap.X); err != nil {
 		panic(err)
 	}
-	log.Printf("req3: %#v\n", resultMap)
-
 }
