@@ -8,6 +8,6 @@ kind create cluster --name "kind" --config cluster.yaml
 
 TODO:
 - [ ] compose url string properly
-- [ ] dynamically generated user/password in initContainer for DataPlaneAPI basic auth cfg
+- [x] dynamically generated user/password in initContainer for DataPlaneAPI basic auth cfg
 - [x] DataPlaneAPI listen only on localhost
 - [ ] avoid crashing at the beginning?

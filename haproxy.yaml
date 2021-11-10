@@ -64,6 +64,9 @@ data:
       hold valid 10s
       hold obsolete 10s
 
+    userlist dataplane-api
+      user admin insecure-password %TEMPLATEDPASSWORD%
+
     peers haproxy-peers
       peer "$HOSTNAME" 0.0.0.0:3000
 
@@ -71,7 +74,7 @@ data:
     # docs: https://www.haproxy.com/documentation/dataplaneapi/enterprise/
     # dataplaneapi usage: https://github.com/haproxytech/dataplaneapi
     program api
-      command sh -c "HAPROXY_CFGFILES='' /usr/bin/dataplaneapi -f=/etc/haproxy/dataplaneapi.hcl"
+      command sh -c "HAPROXY_CFGFILES='' /usr/bin/dataplaneapi --port=5555 --config-file=/etc/haproxy/haproxy.cfg --userlist=dataplane-api --haproxy-bin=/usr/local/sbin/haproxy --reload-delay=1 --reload-cmd='kill -SIGUSR2 1' --restart-cmd='kill -SIGUSR2 1'"
       # avoids restarting the DataPlaneAPI each time HAProxy reloads
       no option start-on-reload
 
@@ -90,32 +93,6 @@ data:
       #option httpchk GET /
       # see: http://cbonte.github.io/haproxy-dconv/2.4/configuration.html#4-server-template
       server-template srv 3 sticky-backend.default.svc.cluster.local:80 check inter 1s resolvers k8s init-addr none
-
-  dataplaneapi.hcl: |
-    dataplaneapi {
-      host = "127.0.0.1"
-      port = 5555
-      user "admin" {
-        insecure = true
-        password = "a1db9e7de13e2552fe95fc2f8e9f45b3513e1b22"
-      }
-    }
-
-    haproxy {
-      config_file = "/etc/haproxy/haproxy.cfg"
-      haproxy_bin = "/usr/local/sbin/haproxy"
-      reload {
-        reload_delay = 1
-        reload_cmd  = "kill -SIGUSR2 1"
-        restart_cmd = "kill -SIGUSR2 1"
-      }
-    }
-
-    log_targets = [
-      {
-        log_level = "trace"
-      },
-    ]
 ---
 apiVersion: v1
 kind: Service
@@ -159,9 +136,16 @@ spec:
     spec:
       serviceAccountName: haproxy
       initContainers:
-      - name: copy
+      - name: init
         image: busybox
-        command: ["sh", "-c", 'cp /source/* /etc/haproxy']
+        command:
+          - "/bin/sh"
+          - "-c"
+          - |
+            cp /source/* /etc/haproxy && \
+            passwd=$(cat /dev/urandom | tr -dc A-Za-z0-9 | head -c30) && \
+            echo "$passwd" > /etc/haproxy/dataplaneapi.password && \
+            sed -i "s|%TEMPLATEDPASSWORD%|$passwd|" /etc/haproxy/haproxy.cfg
         volumeMounts:
         - mountPath: /source
           name: haproxy-config-ro-volume
@@ -171,24 +155,21 @@ spec:
       - name: haproxy-peer-sync
         image: "damdo/k8s-haproxy-peer-sync:0.0.1"
         command:
-        - ./k8s-haproxy-peer-sync
-        - "--service=haproxy"
-        - "--namespace=default"
-        - "--user=admin"
-        - "--password=a1db9e7de13e2552fe95fc2f8e9f45b3513e1b22"
-        - "--data-plane-api-address=127.0.0.1:5555"
-        - "--peer-port=3000"
-        - "--peer-section-name=haproxy-peers"
-        env:
-        - name: POD_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
-      - name: debug
-        image: "damdo/utilpine:3.14.2-20211023173401-4921f56"
-        command:
-        - sleep
-        - infinity
+        - "/bin/sh"
+        - "-c"
+        - |
+          ./k8s-haproxy-peer-sync \
+          --service=haproxy \
+          --namespace=default \
+          --user=admin \
+          --password="$(cat /etc/haproxy/dataplaneapi.password)" \
+          --data-plane-api-address=127.0.0.1:5555 \
+          --peer-port=3000 \
+          --peer-section-name=haproxy-peers
+        volumeMounts:
+          - mountPath: /etc/haproxy
+            name: haproxy-config-rw-volume
+            readOnly: true
       - name: haproxy
         # the haproxytech version of haproxy already has the DataplaneAPI built in
         image: "haproxytech/haproxy-alpine:2.4.8"

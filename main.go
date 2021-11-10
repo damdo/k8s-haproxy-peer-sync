@@ -22,15 +22,17 @@ import (
 	"k8s.io/client-go/tools/cache"
 )
 
-var service = flag.String("service", "", "")
-var namespace = flag.String("namespace", "", "")
-var user = flag.String("user", "", "")
-var password = flag.String("password", "", "")
-var dataPlaneAPIAddress = flag.String("data-plane-api-address", "127.0.0.1:5555", "")
-var peerSectionName = flag.String("peer-section-name", "haproxy-peers", "")
-var peersPort = flag.Int("peer-port", 3000, "")
+var service = flag.String("service", "", "the Kubernetes Service that looks after the HAProxy pods")
+var namespace = flag.String("namespace", "", "the Kubernetes Namespace where the HAProxy setup lives")
+var user = flag.String("user", "admin", "the username to access the DataPlane API via HTTP Basic Access Authentication")
+var password = flag.String("password", "", "the username to access the DataPlane API via HTTP Basic Access Authentication")
+
+var dataPlaneAPIAddress = flag.String("data-plane-api-address", "127.0.0.1:5555", "(optional) the address (ip:port) where the HAProxy DataPlane API is listening")
+var peerSectionName = flag.String("peer-section-name", "haproxy-peers", "(optional) the name of the peer-section to sync")
+var peersPort = flag.Int("peer-port", 3000, "(optional) the port where HAProxy listens for peer communication")
+var networkInterface = flag.String("network-interface", "eth0", "(optional) the network interface that HAProxy uses for peer communication")
 var localHostname string = os.Getenv("HOSTNAME")
-var myIPv4Address string = os.Getenv("POD_IP")
+var ownIPAddress string
 
 type Peer struct {
 	addresses []string
@@ -41,12 +43,6 @@ func main() {
 
 	// Enable line numbers in logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-
-	// in-cluster config
-	config, err := rest.InClusterConfig()
-	if err != nil {
-		panic(err.Error())
-	}
 
 	//var kubeconfig *string
 	//if home := homedir.HomeDir(); home != "" {
@@ -62,9 +58,31 @@ func main() {
 
 	flag.Parse()
 
-	if *service == "" || *namespace == "" {
+	if *service == "" || *namespace == "" || *password == "" {
 		flag.Usage()
 		os.Exit(1)
+	}
+
+	ownIPAddress, err := getInterfaceIpv4Addr(*networkInterface)
+	if err != nil {
+		panic(err.Error())
+	}
+
+	log.Printf("service=%#v", *service)
+	log.Printf("namespace=%#v", *namespace)
+	log.Printf("user=%#v", *user)
+	log.Printf("password=%#v", *password)
+	log.Printf("dataPlaneAPIAddress=%#v", *dataPlaneAPIAddress)
+	log.Printf("peerSectionName=%#v", *peerSectionName)
+	log.Printf("peersPort=%#v", *peersPort)
+	log.Printf("networkInterface=%#v", *networkInterface)
+	log.Printf("localHostname=%#v", localHostname)
+	log.Printf("ownIPAddress=%#v", ownIPAddress)
+
+	// in-cluster config
+	config, err := rest.InClusterConfig()
+	if err != nil {
+		panic(err.Error())
 	}
 
 	// create the clientset
@@ -86,11 +104,6 @@ func main() {
 	//informer := factory.Core().V1().Pods().Informer()
 	//informer := factory.Discovery().V1().EndpointSlice().Informer()
 
-	myIPv4Address, err = getInterfaceIpv4Addr("eth0")
-	if err != nil {
-		panic(err.Error())
-	}
-
 	stopper := make(chan struct{})
 	defer close(stopper)
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -111,10 +124,10 @@ func main() {
 			// we need to always add ourselves in the peerlist
 			// even if we are not in the EndpointSlice yet,
 			// because that's needed for the HAProxy config to work
-			oldPeers = append(oldPeers, Peer{addresses: []string{myIPv4Address}, hostname: localHostname})
+			oldPeers = append(oldPeers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
 			for _, v := range mOldObj.Endpoints {
 				//if *v.Conditions.Ready {
-				if v.Addresses[0] != myIPv4Address {
+				if v.Addresses[0] != ownIPAddress {
 					oldPeers = append(oldPeers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
 				//}
@@ -124,10 +137,10 @@ func main() {
 			// we need to always add ourselves in the peerlist
 			// even if we are not in the EndpointSlice yet,
 			// because that's needed for the HAProxy config to work
-			peers = append(peers, Peer{addresses: []string{myIPv4Address}, hostname: localHostname})
+			peers = append(peers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
 			for _, v := range mObj.Endpoints {
 				//if *v.Conditions.Ready {
-				if v.Addresses[0] != myIPv4Address {
+				if v.Addresses[0] != ownIPAddress {
 					peers = append(peers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
 				//}
@@ -254,7 +267,7 @@ func updateHaproxy(desired []Peer, deletions []Peer) {
 
 	for _, p := range desired {
 
-		if p.addresses[0] == myIPv4Address {
+		if p.addresses[0] == ownIPAddress {
 			// we don't want to modify the local entry
 			// (already present in the runtime config)
 			continue
@@ -281,7 +294,7 @@ func updateHaproxy(desired []Peer, deletions []Peer) {
 	}
 
 	for _, p := range deletions {
-		if p.addresses[0] == myIPv4Address {
+		if p.addresses[0] == ownIPAddress {
 			// we don't want to modify the local entry
 			// (already present in the runtime config)
 			continue
