@@ -3,8 +3,6 @@ package main
 
 import (
 	"bytes"
-	b64 "encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -31,7 +29,13 @@ var password = flag.String("password", "", "")
 var dataPlaneAPIAddress = flag.String("data-plane-api-address", "127.0.0.1:5555", "")
 var peerSectionName = flag.String("peer-section-name", "haproxy-peers", "")
 var peersPort = flag.Int("peer-port", 3000, "")
-var myIPv4Address string
+var localHostname string = os.Getenv("HOSTNAME")
+var myIPv4Address string = os.Getenv("POD_IP")
+
+type Peer struct {
+	addresses []string
+	hostname  string
+}
 
 func main() {
 
@@ -101,37 +105,40 @@ func main() {
 		UpdateFunc: func(oldObj, obj interface{}) {
 			mOldObj := oldObj.(*discoveryv1.EndpointSlice)
 			mObj := obj.(*discoveryv1.EndpointSlice)
+			log.Printf("ES updated: '%s'\n", mObj.GetName())
 
-			var oldAddrs []string
+			var oldPeers []Peer
 			// we need to always add ourselves in the peerlist
 			// even if we are not in the EndpointSlice yet,
 			// because that's needed for the HAProxy config to work
-			oldAddrs = append(oldAddrs, myIPv4Address)
+			oldPeers = append(oldPeers, Peer{addresses: []string{myIPv4Address}, hostname: localHostname})
 			for _, v := range mOldObj.Endpoints {
 				//if *v.Conditions.Ready {
 				if v.Addresses[0] != myIPv4Address {
-					oldAddrs = append(oldAddrs, v.Addresses[0])
+					log.Printf("%#v\n", v)
+					oldPeers = append(oldPeers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
 				//}
 			}
 
-			var addrs []string
+			var peers []Peer
 			// we need to always add ourselves in the peerlist
 			// even if we are not in the EndpointSlice yet,
 			// because that's needed for the HAProxy config to work
-			addrs = append(addrs, myIPv4Address)
+			peers = append(peers, Peer{addresses: []string{myIPv4Address}, hostname: localHostname})
 			for _, v := range mObj.Endpoints {
 				//if *v.Conditions.Ready {
 				if v.Addresses[0] != myIPv4Address {
-					addrs = append(addrs, v.Addresses[0])
+					log.Printf("%#v\n", v)
+					peers = append(peers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
 				//}
 			}
 
-			toRemove := difference(oldAddrs, addrs)
-			log.Printf("ES updated: '%s', desired: %#v, deletions: %#v\n", mObj.GetName(), addrs, toRemove)
+			toRemove := difference(oldPeers, peers)
+			log.Printf("ES: '%s', desired: %#v, deletions: %#v\n", mObj.GetName(), peers, toRemove)
 
-			updateHaproxy(addrs, toRemove)
+			updateHaproxy(peers, toRemove)
 		},
 	})
 
@@ -166,21 +173,21 @@ func getInterfaceIpv4Addr(interfaceName string) (addr string, err error) {
 }
 
 // difference returns the elements in `a` that aren't in `b`.
-func difference(a, b []string) []string {
+func difference(a []Peer, b []Peer) []Peer {
 	mb := make(map[string]struct{}, len(b))
 	for _, x := range b {
-		mb[x] = struct{}{}
+		mb[x.hostname] = struct{}{}
 	}
-	var diff []string
+	var diff []Peer
 	for _, x := range a {
-		if _, found := mb[x]; !found {
+		if _, found := mb[x.hostname]; !found {
 			diff = append(diff, x)
 		}
 	}
 	return diff
 }
 
-func updateHaproxy(desired []string, deletions []string) {
+func updateHaproxy(desired []Peer, deletions []Peer) {
 	client := &http.Client{}
 
 	req, err := http.NewRequest("GET", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/version", nil)
@@ -247,18 +254,15 @@ func updateHaproxy(desired []string, deletions []string) {
 	}
 	log.Printf("peer_section: '%s' CREATION, status_code=%d\n", *peerSectionName, resp.StatusCode)
 
-	for _, addr := range desired {
-		var hostname string
+	for _, p := range desired {
 
-		if addr == myIPv4Address {
+		if p.addresses[0] == myIPv4Address {
 			// we don't want to modify the local entry
 			// (already present in the runtime config)
 			continue
 		}
 
-		hostname = hex.EncodeToString([]byte(b64.StdEncoding.EncodeToString([]byte(addr))))
-
-		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, hostname, addr, *peersPort)
+		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort)
 		body := []byte(bodyStr)
 		req, err := http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries", bytes.NewReader(body))
 		if err != nil {
@@ -275,22 +279,20 @@ func updateHaproxy(desired []string, deletions []string) {
 		if err != nil {
 			log.Println(err)
 		}
-		log.Printf("peer_entries: 'peer %s %s:%d' CREATION, status_code=%d\n", hostname, addr, *peersPort, resp.StatusCode)
+		log.Printf("peer_entries: 'peer %s %s:%d' CREATION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
 
-	for _, addr := range deletions {
-		var hostname string
-		if addr == myIPv4Address {
+	for _, p := range deletions {
+		if p.addresses[0] == myIPv4Address {
 			// we don't want to modify the local entry
 			// (already present in the runtime config)
 			continue
 		}
 
-		hostname = hex.EncodeToString([]byte(b64.StdEncoding.EncodeToString([]byte(addr))))
+		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort)
 
-		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, hostname, addr, *peersPort)
 		body := []byte(bodyStr)
-		req, err := http.NewRequest("DELETE", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries/%s", hostname), bytes.NewReader(body))
+		req, err := http.NewRequest("DELETE", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries/%s", p.hostname), bytes.NewReader(body))
 		if err != nil {
 			log.Println(err)
 		}
@@ -305,7 +307,7 @@ func updateHaproxy(desired []string, deletions []string) {
 		if err != nil {
 			log.Println(err)
 		}
-		log.Printf("peer_entries: 'peer %s %s:%d' DELETION, status_code=%d\n", hostname, addr, *peersPort, resp.StatusCode)
+		log.Printf("peer_entries: 'peer %s %s:%d' DELETION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
 
 	// commit: /services/haproxy/transactions/{id}

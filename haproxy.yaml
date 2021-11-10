@@ -66,7 +66,7 @@ data:
 
     peers haproxy-peers
       #peer "$HOSTNAME" "$MY_POD_IP":3000
-      peer "$HAPROXY_PEERNAME" 0.0.0.0:3000
+      peer "$HOSTNAME" 0.0.0.0:3000
 
     # we enable the DataPlaneAPI to allow us managing the HAProxy configuration dynamically via HTTP REST APIs
     # docs: https://www.haproxy.com/documentation/dataplaneapi/enterprise/
@@ -162,12 +162,7 @@ spec:
       initContainers:
       - name: copy
         image: busybox
-        command: ["sh", "-c", 'cp /source/* /etc/haproxy && echo -n "$MY_POD_IP" | base64 | xxd -p -l 16 | tr -d "[:blank:]" > /etc/haproxy/peername']
-        env:
-        - name: MY_POD_IP
-          valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
+        command: ["sh", "-c", 'cp /source/* /etc/haproxy']
         volumeMounts:
         - mountPath: /source
           name: haproxy-config-ro-volume
@@ -198,8 +193,6 @@ spec:
       - name: haproxy
         # the haproxytech version of haproxy already has the DataplaneAPI built in
         image: "haproxytech/haproxy-alpine:2.4.8"
-        command: ["/bin/sh","-c"]
-        args: [ 'export HAPROXY_PEERNAME="$(cat /etc/haproxy/peername | tr -d "\n")" && haproxy -L "$(cat /etc/haproxy/peername | tr -d "\n")" -f /usr/local/etc/haproxy/haproxy.cfg' ]
         env:
         - name: MY_POD_IP
           valueFrom:
