@@ -65,7 +65,6 @@ data:
       hold obsolete 10s
 
     peers haproxy-peers
-      #peer "$HOSTNAME" "$MY_POD_IP":3000
       peer "$HOSTNAME" 0.0.0.0:3000
 
     # we enable the DataPlaneAPI to allow us managing the HAProxy configuration dynamically via HTTP REST APIs
@@ -181,7 +180,7 @@ spec:
         - "--peer-port=3000"
         - "--peer-section-name=haproxy-peers"
         env:
-        - name: MY_POD_IP
+        - name: POD_IP
           valueFrom:
             fieldRef:
               fieldPath: status.podIP

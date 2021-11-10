@@ -115,7 +115,6 @@ func main() {
 			for _, v := range mOldObj.Endpoints {
 				//if *v.Conditions.Ready {
 				if v.Addresses[0] != myIPv4Address {
-					log.Printf("%#v\n", v)
 					oldPeers = append(oldPeers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
 				//}
@@ -129,7 +128,6 @@ func main() {
 			for _, v := range mObj.Endpoints {
 				//if *v.Conditions.Ready {
 				if v.Addresses[0] != myIPv4Address {
-					log.Printf("%#v\n", v)
 					peers = append(peers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
 				//}
