@@ -124,7 +124,7 @@ func main() {
 			// we need to always add ourselves in the peerlist
 			// even if we are not in the EndpointSlice yet,
 			// because that's needed for the HAProxy config to work
-			oldPeers = append(oldPeers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
+			//oldPeers = append(oldPeers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
 			for _, v := range mOldObj.Endpoints {
 				//if *v.Conditions.Ready {
 				if v.Addresses[0] != ownIPAddress {
@@ -137,7 +137,7 @@ func main() {
 			// we need to always add ourselves in the peerlist
 			// even if we are not in the EndpointSlice yet,
 			// because that's needed for the HAProxy config to work
-			peers = append(peers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
+			//peers = append(peers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
 			for _, v := range mObj.Endpoints {
 				//if *v.Conditions.Ready {
 				if v.Addresses[0] != ownIPAddress {
