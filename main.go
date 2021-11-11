@@ -1,17 +1,15 @@
-// Note: the example only works with the code within the same release/branch.
 package main
 
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net"
 	"net/http"
 	"os"
+	"strconv"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -33,11 +31,6 @@ var peersPort = flag.Int("peer-port", 3000, "(optional) the port where HAProxy l
 var networkInterface = flag.String("network-interface", "eth0", "(optional) the network interface that HAProxy uses for peer communication")
 var localHostname string = os.Getenv("HOSTNAME")
 var ownIPAddress string
-
-type Peer struct {
-	addresses []string
-	hostname  string
-}
 
 func main() {
 
@@ -68,16 +61,17 @@ func main() {
 		panic(err.Error())
 	}
 
-	log.Printf("service=%#v", *service)
-	log.Printf("namespace=%#v", *namespace)
-	log.Printf("user=%#v", *user)
-	log.Printf("password=%#v", *password)
-	log.Printf("dataPlaneAPIAddress=%#v", *dataPlaneAPIAddress)
-	log.Printf("peerSectionName=%#v", *peerSectionName)
-	log.Printf("peersPort=%#v", *peersPort)
-	log.Printf("networkInterface=%#v", *networkInterface)
-	log.Printf("localHostname=%#v", localHostname)
-	log.Printf("ownIPAddress=%#v", ownIPAddress)
+	log.Println("Starting with config:")
+	log.Printf("service=%#v\n", *service)
+	log.Printf("namespace=%#v\n", *namespace)
+	log.Printf("user=%#v\n", *user)
+	log.Println("password=<REDACTED>")
+	log.Printf("dataPlaneAPIAddress=%#v\n", *dataPlaneAPIAddress)
+	log.Printf("peerSectionName=%#v\n", *peerSectionName)
+	log.Printf("peersPort=%#v\n", *peersPort)
+	log.Printf("networkInterface=%#v\n", *networkInterface)
+	log.Printf("localHostname=%#v\n", localHostname)
+	log.Printf("ownIPAddress=%#v\n", ownIPAddress)
 
 	// in-cluster config
 	config, err := rest.InClusterConfig()
@@ -121,86 +115,35 @@ func main() {
 			log.Printf("ES updated: '%s'\n", mObj.GetName())
 
 			var oldPeers []Peer
-			// we need to always add ourselves in the peerlist
-			// even if we are not in the EndpointSlice yet,
-			// because that's needed for the HAProxy config to work
-			//oldPeers = append(oldPeers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
 			for _, v := range mOldObj.Endpoints {
-				//if *v.Conditions.Ready {
 				if v.Addresses[0] != ownIPAddress {
 					oldPeers = append(oldPeers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
-				//}
 			}
 
-			var peers []Peer
-			// we need to always add ourselves in the peerlist
-			// even if we are not in the EndpointSlice yet,
-			// because that's needed for the HAProxy config to work
-			//peers = append(peers, Peer{addresses: []string{ownIPAddress}, hostname: localHostname})
+			var desiredPeers []Peer
 			for _, v := range mObj.Endpoints {
-				//if *v.Conditions.Ready {
 				if v.Addresses[0] != ownIPAddress {
-					peers = append(peers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
+					desiredPeers = append(desiredPeers, Peer{addresses: v.Addresses, hostname: v.TargetRef.Name})
 				}
-				//}
 			}
 
-			toRemove := difference(oldPeers, peers)
-			log.Printf("ES: '%s', desired: %#v, deletions: %#v\n", mObj.GetName(), peers, toRemove)
+			toRemove := difference(oldPeers, desiredPeers)
+			log.Printf("ES: '%s', desired: %#v, toRemove: %#v\n", mObj.GetName(), desiredPeers, toRemove)
 
-			updateHaproxy(peers, toRemove)
+			updatePeers(desiredPeers, toRemove)
 		},
 	})
 
 	informer.Run(stopper)
 }
 
-type Result struct {
-	X map[string]interface{} `json:"-"`
-}
+var res map[string]interface{}
 
-func getInterfaceIpv4Addr(interfaceName string) (addr string, err error) {
-	var (
-		ief      *net.Interface
-		addrs    []net.Addr
-		ipv4Addr net.IP
-	)
-	if ief, err = net.InterfaceByName(interfaceName); err != nil { // get interface
-		return
-	}
-	if addrs, err = ief.Addrs(); err != nil { // get addresses
-		return
-	}
-	for _, addr := range addrs { // get ipv4 address
-		if ipv4Addr = addr.(*net.IPNet).IP.To4(); ipv4Addr != nil {
-			break
-		}
-	}
-	if ipv4Addr == nil {
-		return "", errors.New(fmt.Sprintf("interface %s don't have an ipv4 address\n", interfaceName))
-	}
-	return ipv4Addr.String(), nil
-}
-
-// difference returns the elements in `a` that aren't in `b`.
-func difference(a []Peer, b []Peer) []Peer {
-	mb := make(map[string]struct{}, len(b))
-	for _, x := range b {
-		mb[x.hostname] = struct{}{}
-	}
-	var diff []Peer
-	for _, x := range a {
-		if _, found := mb[x.hostname]; !found {
-			diff = append(diff, x)
-		}
-	}
-	return diff
-}
-
-func updateHaproxy(desired []Peer, deletions []Peer) {
+func updatePeers(desired []Peer, deletions []Peer) {
 	client := &http.Client{}
 
+	// get version
 	req, err := http.NewRequest("GET", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/version", nil)
 	if err != nil {
 		log.Println(err)
@@ -211,79 +154,87 @@ func updateHaproxy(desired []Peer, deletions []Peer) {
 	if err != nil {
 		log.Println(err)
 	}
-
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
-
 	var version int
 	if err := json.Unmarshal(body, &version); err != nil {
 		panic(err)
 	}
 
-	req, err = http.NewRequest("POST", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions?version=%d", version), nil)
+	// start a transaction
+	req, err = http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions", nil)
 	if err != nil {
 		log.Println(err)
 	}
+
+	q := req.URL.Query()
+	q.Add("version", strconv.Itoa(version))
+	req.URL.RawQuery = q.Encode()
 	req.SetBasicAuth(*user, *password)
 	req.Header.Add("Content-Type", "application/json")
+
 	resp, err = client.Do(req)
 	if err != nil {
 		log.Println(err)
 	}
-
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
 		panic(err)
 	}
-	resultMap := Result{}
-	if err := json.Unmarshal(body, &resultMap.X); err != nil {
+	resultMap := make(map[string]interface{})
+
+	if err := json.Unmarshal(body, &resultMap); err != nil {
 		panic(err)
 	}
 	transactionID := ""
-	if n, ok := resultMap.X["id"].(string); ok {
+	if n, ok := resultMap["id"].(string); ok {
 		transactionID = string(n)
 	} else {
 		panic(err)
 	}
-
 	log.Println("transaction: starting transaction against HAProxy DataPlane API")
 	log.Printf("transaction: CREATION, version=%d, transaction_id='%s', status_code=%d\n", version, transactionID, resp.StatusCode)
 
-	// create requests
+	// add peer_section
 	body = []byte(fmt.Sprintf(`{"name": "%s"}`, *peerSectionName))
-	req, err = http.NewRequest("POST", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_section?transaction_id=%s", transactionID), bytes.NewReader(body))
+	req, err = http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_section", bytes.NewReader(body))
 	if err != nil {
 		log.Println(err)
 	}
+
+	q = req.URL.Query()
+	q.Add("transaction_id", transactionID)
+	req.URL.RawQuery = q.Encode()
 	req.SetBasicAuth(*user, *password)
 	req.Header.Add("Content-Type", "application/json")
+
 	resp, err = client.Do(req)
 	if err != nil {
 		log.Println(err)
 	}
 	log.Printf("peer_section: '%s' CREATION, status_code=%d\n", *peerSectionName, resp.StatusCode)
 
+	// create desired peer_entries
 	for _, p := range desired {
-
 		if p.addresses[0] == ownIPAddress {
 			// we don't want to modify the local entry
 			// (already present in the runtime config)
 			continue
 		}
 
-		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort)
-		body := []byte(bodyStr)
+		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
 		req, err := http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries", bytes.NewReader(body))
 		if err != nil {
 			log.Println(err)
 		}
-		req.SetBasicAuth(*user, *password)
+
 		q := req.URL.Query()
 		q.Add("peer_section", *peerSectionName)
 		q.Add("transaction_id", transactionID)
 		req.URL.RawQuery = q.Encode()
+		req.SetBasicAuth(*user, *password)
 		req.Header.Add("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
@@ -293,6 +244,7 @@ func updateHaproxy(desired []Peer, deletions []Peer) {
 		log.Printf("peer_entries: 'peer %s %s:%d' CREATION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
 
+	// delete unneded peer_entries
 	for _, p := range deletions {
 		if p.addresses[0] == ownIPAddress {
 			// we don't want to modify the local entry
@@ -300,13 +252,12 @@ func updateHaproxy(desired []Peer, deletions []Peer) {
 			continue
 		}
 
-		bodyStr := fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort)
-
-		body := []byte(bodyStr)
+		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
 		req, err := http.NewRequest("DELETE", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries/%s", p.hostname), bytes.NewReader(body))
 		if err != nil {
 			log.Println(err)
 		}
+
 		req.SetBasicAuth(*user, *password)
 		q := req.URL.Query()
 		q.Add("peer_section", *peerSectionName)
@@ -321,13 +272,15 @@ func updateHaproxy(desired []Peer, deletions []Peer) {
 		log.Printf("peer_entries: 'peer %s %s:%d' DELETION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
 
-	// commit: /services/haproxy/transactions/{id}
+	// commit transaction
 	req, err = http.NewRequest("PUT", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions/%s", transactionID), nil)
 	if err != nil {
 		log.Println(err)
 	}
+
 	req.SetBasicAuth(*user, *password)
 	req.Header.Add("Content-Type", "application/json")
+
 	resp, err = client.Do(req)
 	if err != nil {
 		log.Println(err)
@@ -336,9 +289,9 @@ func updateHaproxy(desired []Peer, deletions []Peer) {
 	if err != nil {
 		panic(err)
 	}
-	resultMap = Result{}
-	if err := json.Unmarshal(body, &resultMap.X); err != nil {
+	resultMap = make(map[string]interface{})
+	if err := json.Unmarshal(body, &resultMap); err != nil {
 		panic(err)
 	}
-	log.Printf("transaction: COMMIT transaction_id='%s', status_code=%d, result=%#v\n", transactionID, resp.StatusCode, resultMap.X)
+	log.Printf("transaction: COMMIT transaction_id='%s', status_code=%d, result=%#v\n", transactionID, resp.StatusCode, resultMap)
 }
