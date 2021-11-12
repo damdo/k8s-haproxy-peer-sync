@@ -38,9 +38,9 @@ Profit!
 
 ### debug
 
-Run some e2e tests:
+Run some e2e tests against the kind cluster setup:
 ```
-kubectl --context kind-kind port-forward svc/lb 8080:8080
+bash ./tests.sh http://127.0.0.1:8080
 ```
 
 You can inspect the 'syncer' logs via:
