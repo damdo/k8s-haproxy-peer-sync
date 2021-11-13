@@ -8,31 +8,27 @@ Robust to scale-in/outs.
 
 ### try it out
 
-Create a cluster where to deploy it.
-For the purpose of example we'll use a k8s kind cluster here:
-```
-kind create cluster --name "kind" --config cluster.yaml
-```
-
-Apply the Example sticky backend
-```
-kubectl --context kind-kind apply -f examples/sticky-backend.yaml
-```
-
-Apply the "Load balancer" as a single entrypoint to the kind cluster
-```
-kubectl --context kind-kind apply -f examples/lb.yaml
-```
-
-Apply the multi-replicas HAProxy setup with the k8s-haproxy-peer-sync sidecar
-```
-kubectl --context kind-kind apply -f examples/haproxy.yaml
-```
-
-Port forward the load balancer entrypoint to your local machine
-```
-kubectl --context kind-kind port-forward svc/lb 8080:8080
-```
+0) Create a cluster where to deploy it.
+   As an example we'll use a [k8s kind](https://kind.sigs.k8s.io/) cluster here:
+   ```
+   kind create cluster --name "kind" --config cluster.yaml
+   ```
+0) Apply the Example sticky backend
+   ```
+   kubectl --context kind-kind apply -f examples/sticky-backend.yaml
+   ```
+0) Apply the "Load balancer" as a single entrypoint to the kind cluster
+   ```
+   kubectl --context kind-kind apply -f examples/lb.yaml
+   ```
+0) Apply the multi-replicas HAProxy setup with the k8s-haproxy-peer-sync sidecar
+   ```
+   kubectl --context kind-kind apply -f examples/haproxy.yaml
+   ```
+0) Port forward the load balancer entrypoint to your local machine
+   ```
+   kubectl --context kind-kind port-forward svc/lb 8080:8080
+   ```
 
 Profit!
 
