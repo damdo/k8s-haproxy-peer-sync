@@ -9,12 +9,12 @@ fi
 
 declare -A tests=( ["333333"]="" ["figdfog"]="" ["ae23e3d"]="" ["dagfg"]="" )
 
-echo "> Getting some urls keys assigned to a server.."
+echo "> Getting some urls keys assigned to a sticky backend.."
 for k in "${!tests[@]}"
 do
   v="$(curl -s "${address}"/a/a/"$k" | grep -E --only-matching "sticky-backend-[0-9]+")"
   tests["$k"]="$v"
-  echo "For: $k | server: ${tests[$k]}"
+  echo "For: $k | sticky backend: ${tests[$k]}"
 done
 
 echo "> Starting the tests.."
