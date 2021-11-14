@@ -155,9 +155,13 @@ spec:
           - "/bin/sh"
           - "-c"
           - |
+            # copy config from the RO volume into the RW one
             cp /source/* /etc/haproxy && \
+            # generate random password for the HAProxy DataplaneAPI
             passwd=$(cat /dev/urandom | tr -dc A-Za-z0-9 | head -c30) && \
+            # write passowrd to local file for haproxy-peer-sync consumption
             echo "$passwd" > /etc/haproxy/dataplaneapi.password && \
+            # write passowrd to the templated HAProxy config file for HAProxy consumption
             sed -i "s|%TEMPLATEDPASSWORD%|$passwd|" /etc/haproxy/haproxy.cfg
         volumeMounts:
         - mountPath: /source

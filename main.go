@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"time"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -31,16 +32,10 @@ var dataPlaneAPIAddress = flag.String("data-plane-api-address", "127.0.0.1:5555"
 var peerSectionName = flag.String("peer-section-name", "haproxy-peers", "(optional) the name of the peer-section to sync")
 var peersPort = flag.Int("peer-port", 3000, "(optional) the port where HAProxy listens for peer communication")
 var networkInterface = flag.String("network-interface", "eth0", "(optional) the network interface that HAProxy uses for peer communication")
+var startupDelayStr = flag.String("startup-delay", "2s", "(optional) initial delay to wait for HAProxy DataPlane API to be up and running")
 var ownIPAddress string
 
 func main() {
-
-	// create a context.Context that is cancelled on an os.Interrupt signal. This allows to prevent the application
-	// from exiting until it receives an interrupt signal. Its 'ctx.Done()' channel is passed to informer.Run, to keep the informer
-	// alive until execution is cancelled.
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
-	defer cancel()
-
 	// Enable line numbers in logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
@@ -48,12 +43,11 @@ func main() {
 
 	if *service == "" || *namespace == "" || *password == "" {
 		flag.Usage()
-		os.Exit(1)
+		log.Fatalln("error missing non optional flags")
 	}
-
-	ownIPAddress, err := getInterfaceIpv4Addr(*networkInterface)
+	startupDelay, err := time.ParseDuration(*startupDelayStr)
 	if err != nil {
-		panic(err.Error())
+		log.Fatalln(err)
 	}
 
 	log.Println("Starting with config:")
@@ -65,7 +59,27 @@ func main() {
 	log.Printf("peerSectionName=%#v\n", *peerSectionName)
 	log.Printf("peersPort=%#v\n", *peersPort)
 	log.Printf("networkInterface=%#v\n", *networkInterface)
-	log.Printf("ownIPAddress=%#v\n", ownIPAddress)
+	log.Printf("startupDelay=%#v\n", *networkInterface)
+
+	// create a context.Context that is cancelled on an os.Interrupt signal. This allows to prevent the application
+	// from exiting until it receives an interrupt signal. Its 'ctx.Done()' channel is passed to informer.Run, to keep the informer
+	// alive until execution is cancelled.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	log.Printf("waiting for %s startup delay", *startupDelayStr)
+
+	select {
+	case <-time.After(startupDelay):
+		// delay for startupDelay amount
+	case <-ctx.Done():
+		os.Exit(0)
+	}
+
+	ownIPAddress, err := getInterfaceIpv4Addr(*networkInterface)
+	if err != nil {
+		panic(err.Error())
+	}
 
 	// in-cluster config
 	config, err := rest.InClusterConfig()

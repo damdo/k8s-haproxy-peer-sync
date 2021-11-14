@@ -11,4 +11,3 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=${ARCH} go build -a -ldflags='-s -w -extldfl
 FROM alpine:3.14
 WORKDIR /app
 COPY --from=builder /go/src/app/k8s-haproxy-peer-sync /app/
-ENTRYPOINT ["./k8s-haproxy-peer-sync"]
