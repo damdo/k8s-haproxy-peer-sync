@@ -67,4 +67,5 @@ TODO
 - [ ] compose url string properly
 - [x] dynamically generated user/password in initContainer for DataPlaneAPI basic auth cfg
 - [x] DataPlaneAPI listen only on localhost
-- [ ] avoid crashing at the beginning?
+- [x] avoid crashing at the beginning?
+- [ ] Lower logging levels on some less useful things
