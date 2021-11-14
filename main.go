@@ -76,6 +76,7 @@ func main() {
 		os.Exit(0)
 	}
 
+	// get own IPv4 address
 	ownIPAddress, err := getInterfaceIpv4Addr(*networkInterface)
 	if err != nil {
 		panic(err.Error())
@@ -147,16 +148,18 @@ var res map[string]interface{}
 func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 	client := &http.Client{}
 
-	// get version
+	// get current HAProxy config version
+	// https://www.haproxy.com/documentation/dataplaneapi/community/#get-/services/haproxy/configuration/version
 	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/version", nil)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
 	req.SetBasicAuth(*user, *password)
 	req.Header.Add("Content-Type", "application/json")
+
 	resp, err := client.Do(req)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -167,12 +170,12 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 		panic(err)
 	}
 
-	// start a transaction
+	// start a transaction against the HAProxy DataPlane API for the current version
+	// https://www.haproxy.com/documentation/dataplaneapi/community/#post-/services/haproxy/transactions
 	req, err = http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions", nil)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
-
 	q := req.URL.Query()
 	q.Add("version", strconv.Itoa(version))
 	req.URL.RawQuery = q.Encode()
@@ -181,7 +184,7 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 	resp, err = client.Do(req)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
@@ -201,13 +204,13 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 	log.Println("transaction: starting transaction against HAProxy DataPlane API")
 	log.Printf("transaction: CREATION, version=%d, transaction_id='%s', status_code=%d\n", version, transactionID, resp.StatusCode)
 
-	// add peer_section
+	// idempotently add a new peer_section to the HAProxy config
+	// https://www.haproxy.com/documentation/dataplaneapi/community/#post-/services/haproxy/configuration/peer_section
 	body = []byte(fmt.Sprintf(`{"name": "%s"}`, *peerSectionName))
 	req, err = http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_section", bytes.NewReader(body))
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
-
 	q = req.URL.Query()
 	q.Add("transaction_id", transactionID)
 	req.URL.RawQuery = q.Encode()
@@ -216,11 +219,11 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 	resp, err = client.Do(req)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
 	log.Printf("peer_section: '%s' CREATION, status_code=%d\n", *peerSectionName, resp.StatusCode)
 
-	// create desired peer_entries
+	// idempotently add the desired `peer_entry`s to the previously created peer_section in the HAProxy config
 	for _, p := range desired {
 		if p.addresses[0] == ownIPAddress {
 			// we don't want to modify the local entry
@@ -228,12 +231,12 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 			continue
 		}
 
+		// https://www.haproxy.com/documentation/dataplaneapi/community/#post-/services/haproxy/configuration/peer_entries
 		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
 		req, err := http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries", bytes.NewReader(body))
 		if err != nil {
-			log.Println(err)
+			panic(err)
 		}
-
 		q := req.URL.Query()
 		q.Add("peer_section", *peerSectionName)
 		q.Add("transaction_id", transactionID)
@@ -243,12 +246,12 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Println(err)
+			panic(err)
 		}
 		log.Printf("peer_entries: 'peer %s %s:%d' CREATION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
 
-	// delete unneded peer_entries
+	// idempotently delete the unneded `peer_entry`s from the previously created peer_section in the HAProxy config
 	for _, p := range deletions {
 		if p.addresses[0] == ownIPAddress {
 			// we don't want to modify the local entry
@@ -256,12 +259,12 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 			continue
 		}
 
+		// https://www.haproxy.com/documentation/dataplaneapi/community/#delete-/services/haproxy/configuration/peer_entries/-name-
 		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
 		req, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries/%s", p.hostname), bytes.NewReader(body))
 		if err != nil {
-			log.Println(err)
+			panic(err)
 		}
-
 		req.SetBasicAuth(*user, *password)
 		q := req.URL.Query()
 		q.Add("peer_section", *peerSectionName)
@@ -271,23 +274,23 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			log.Println(err)
+			panic(err)
 		}
 		log.Printf("peer_entries: 'peer %s %s:%d' DELETION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
 
-	// commit transaction
+	//commit the previously started transaction against the HAProxy DataPlane API
+	// https://www.haproxy.com/documentation/dataplaneapi/community/#put-/services/haproxy/transactions/-id-
 	req, err = http.NewRequestWithContext(ctx, "PUT", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions/%s", transactionID), nil)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
-
 	req.SetBasicAuth(*user, *password)
 	req.Header.Add("Content-Type", "application/json")
 
 	resp, err = client.Do(req)
 	if err != nil {
-		log.Println(err)
+		panic(err)
 	}
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
