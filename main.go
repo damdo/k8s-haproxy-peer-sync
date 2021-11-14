@@ -35,23 +35,14 @@ var ownIPAddress string
 
 func main() {
 
+	// create a context.Context that is cancelled on an os.Interrupt signal. This allows to prevent the application
+	// from exiting until it receives an interrupt signal. Its 'ctx.Done()' channel is passed to informer.Run, to keep the informer
+	// alive until execution is cancelled.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	// Enable line numbers in logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-
-	//var kubeconfig *string
-	//if home := homedir.HomeDir(); home != "" {
-	//	kubeconfig = flag.String("kubeconfig", filepath.Join(home, ".kube", "config"), "(optional) absolute path to the kubeconfig file")
-	//} else {
-	//	kubeconfig = flag.String("kubeconfig", "", "absolute path to the kubeconfig file")
-	//}
-	//// use the current context in kubeconfig
-	//config, err := clientcmd.BuildConfigFromFlags("", *kubeconfig)
-	//if err != nil {
-	//	panic(err.Error())
-	//}
 
 	flag.Parse()
 
@@ -98,8 +89,6 @@ func main() {
 		cache.Indexers{cache.NamespaceIndex: cache.MetaNamespaceIndexFunc},
 		listOptionsFunc,
 	)
-	//informer := factory.Core().V1().Pods().Informer()
-	//informer := factory.Discovery().V1().EndpointSlice().Informer()
 
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
@@ -132,7 +121,7 @@ func main() {
 			toRemove := difference(oldPeers, desiredPeers)
 			log.Printf("ES: '%s', desired: %#v, toRemove: %#v\n", mObj.GetName(), desiredPeers, toRemove)
 
-			go updatePeers(ctx, desiredPeers, toRemove)
+			updatePeers(ctx, desiredPeers, toRemove)
 		},
 	})
 
