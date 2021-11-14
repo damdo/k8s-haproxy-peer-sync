@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 
 	discoveryv1 "k8s.io/api/discovery/v1"
@@ -29,10 +31,12 @@ var dataPlaneAPIAddress = flag.String("data-plane-api-address", "127.0.0.1:5555"
 var peerSectionName = flag.String("peer-section-name", "haproxy-peers", "(optional) the name of the peer-section to sync")
 var peersPort = flag.Int("peer-port", 3000, "(optional) the port where HAProxy listens for peer communication")
 var networkInterface = flag.String("network-interface", "eth0", "(optional) the network interface that HAProxy uses for peer communication")
-var localHostname string = os.Getenv("HOSTNAME")
 var ownIPAddress string
 
 func main() {
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
 
 	// Enable line numbers in logging
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -70,7 +74,6 @@ func main() {
 	log.Printf("peerSectionName=%#v\n", *peerSectionName)
 	log.Printf("peersPort=%#v\n", *peersPort)
 	log.Printf("networkInterface=%#v\n", *networkInterface)
-	log.Printf("localHostname=%#v\n", localHostname)
 	log.Printf("ownIPAddress=%#v\n", ownIPAddress)
 
 	// in-cluster config
@@ -98,8 +101,6 @@ func main() {
 	//informer := factory.Core().V1().Pods().Informer()
 	//informer := factory.Discovery().V1().EndpointSlice().Informer()
 
-	stopper := make(chan struct{})
-	defer close(stopper)
 	informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
 			mObj := obj.(*discoveryv1.EndpointSlice)
@@ -131,20 +132,20 @@ func main() {
 			toRemove := difference(oldPeers, desiredPeers)
 			log.Printf("ES: '%s', desired: %#v, toRemove: %#v\n", mObj.GetName(), desiredPeers, toRemove)
 
-			updatePeers(desiredPeers, toRemove)
+			go updatePeers(ctx, desiredPeers, toRemove)
 		},
 	})
 
-	informer.Run(stopper)
+	informer.Run(ctx.Done())
 }
 
 var res map[string]interface{}
 
-func updatePeers(desired []Peer, deletions []Peer) {
+func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 	client := &http.Client{}
 
 	// get version
-	req, err := http.NewRequest("GET", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/version", nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/version", nil)
 	if err != nil {
 		log.Println(err)
 	}
@@ -164,7 +165,7 @@ func updatePeers(desired []Peer, deletions []Peer) {
 	}
 
 	// start a transaction
-	req, err = http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions", nil)
+	req, err = http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions", nil)
 	if err != nil {
 		log.Println(err)
 	}
@@ -199,7 +200,7 @@ func updatePeers(desired []Peer, deletions []Peer) {
 
 	// add peer_section
 	body = []byte(fmt.Sprintf(`{"name": "%s"}`, *peerSectionName))
-	req, err = http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_section", bytes.NewReader(body))
+	req, err = http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_section", bytes.NewReader(body))
 	if err != nil {
 		log.Println(err)
 	}
@@ -225,7 +226,7 @@ func updatePeers(desired []Peer, deletions []Peer) {
 		}
 
 		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
-		req, err := http.NewRequest("POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries", bytes.NewReader(body))
 		if err != nil {
 			log.Println(err)
 		}
@@ -253,7 +254,7 @@ func updatePeers(desired []Peer, deletions []Peer) {
 		}
 
 		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
-		req, err := http.NewRequest("DELETE", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries/%s", p.hostname), bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries/%s", p.hostname), bytes.NewReader(body))
 		if err != nil {
 			log.Println(err)
 		}
@@ -273,7 +274,7 @@ func updatePeers(desired []Peer, deletions []Peer) {
 	}
 
 	// commit transaction
-	req, err = http.NewRequest("PUT", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions/%s", transactionID), nil)
+	req, err = http.NewRequestWithContext(ctx, "PUT", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions/%s", transactionID), nil)
 	if err != nil {
 		log.Println(err)
 	}
