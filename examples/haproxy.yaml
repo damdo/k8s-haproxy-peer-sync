@@ -172,6 +172,7 @@ spec:
       - name: haproxy-peer-sync
         image: "damdo/k8s-haproxy-peer-sync:0.0.1"
         command:
+        # need sh for shell expansion for some flag values
         - "/bin/sh"
         - "-c"
         - |
