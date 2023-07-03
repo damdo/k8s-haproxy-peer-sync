@@ -134,7 +134,9 @@ func main() {
 			toRemove := difference(oldPeers, desiredPeers)
 			klog.Infof("ES: '%s', desired: %#v, toRemove: %#v\n", mObj.GetName(), desiredPeers, toRemove)
 
-			updatePeers(ctx, desiredPeers, toRemove)
+			if err := updatePeers(ctx, desiredPeers, toRemove); err != nil {
+				klog.Errorf("error while updating peers: %w", err)
+			}
 		},
 	})
 
@@ -143,36 +145,36 @@ func main() {
 
 var res map[string]interface{}
 
-func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
+func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) error {
 	client := &http.Client{}
 
 	// get current HAProxy config version
 	// https://www.haproxy.com/documentation/dataplaneapi/community/#get-/services/haproxy/configuration/version
 	req, err := http.NewRequestWithContext(ctx, "GET", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/version", nil)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting up HTTP request for version: %w", err)
 	}
 	req.SetBasicAuth(*user, *password)
 	req.Header.Add("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting up HTTP client for version: %w", err)
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error reading HTTP response for version: %w", err)
 	}
 	var version int
 	if err := json.Unmarshal(body, &version); err != nil {
-		panic(err)
+		return fmt.Errorf("error unmarshalling HTTP response for version: %w", err)
 	}
 
 	// start a transaction against the HAProxy DataPlane API for the current version
 	// https://www.haproxy.com/documentation/dataplaneapi/community/#post-/services/haproxy/transactions
 	req, err = http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions", nil)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting up HTTP request for transactions: %w", err)
 	}
 	q := req.URL.Query()
 	q.Add("version", strconv.Itoa(version))
@@ -182,22 +184,22 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 	resp, err = client.Do(req)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting up HTTP client for transactions: %w", err)
 	}
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error reading HTTP response for transactions: %w", err)
 	}
 	resultMap := make(map[string]interface{})
 
 	if err := json.Unmarshal(body, &resultMap); err != nil {
-		panic(err)
+		return fmt.Errorf("error unmarshalling HTTP response for transactions: %w", err)
 	}
 	transactionID := ""
 	if n, ok := resultMap["id"].(string); ok {
 		transactionID = string(n)
 	} else {
-		panic(err)
+		return fmt.Errorf("unable to find transaction id")
 	}
 	klog.Info("transaction: starting transaction against HAProxy DataPlane API")
 	klog.Infof("transaction: CREATION, version=%d, transaction_id='%s', status_code=%d\n", version, transactionID, resp.StatusCode)
@@ -207,7 +209,7 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 	body = []byte(fmt.Sprintf(`{"name": "%s"}`, *peerSectionName))
 	req, err = http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_section", bytes.NewReader(body))
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting HTTP request for creating peer_section: %w", err)
 	}
 	q = req.URL.Query()
 	q.Add("transaction_id", transactionID)
@@ -217,7 +219,7 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 	resp, err = client.Do(req)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting up HTTP client for creating peer_section: %w", err)
 	}
 	klog.Infof("peer_section: '%s' CREATION, status_code=%d\n", *peerSectionName, resp.StatusCode)
 
@@ -233,7 +235,7 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
 		req, err := http.NewRequestWithContext(ctx, "POST", "http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries", bytes.NewReader(body))
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("error setting up HTTP request for writing peer_entries: %w", err)
 		}
 		q := req.URL.Query()
 		q.Add("peer_section", *peerSectionName)
@@ -244,7 +246,7 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("error setting up HTTP client for writing peer_entries: %w", err)
 		}
 		klog.Infof("peer_entries: 'peer %s %s:%d' CREATION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
@@ -261,7 +263,7 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 		body := []byte(fmt.Sprintf(`{"name": "%s", "address":"%s", "port":%d}`, p.hostname, p.addresses[0], *peersPort))
 		req, err := http.NewRequestWithContext(ctx, "DELETE", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/configuration/peer_entries/%s", p.hostname), bytes.NewReader(body))
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("error setting up HTTP request for deleting peer_entry: %w", err)
 		}
 		req.SetBasicAuth(*user, *password)
 		q := req.URL.Query()
@@ -272,7 +274,7 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 
 		resp, err := client.Do(req)
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("error setting up HTTP client for deleting peer_entry: %w", err)
 		}
 		klog.Infof("peer_entries: 'peer %s %s:%d' DELETION, status_code=%d\n", p.hostname, p.addresses[0], *peersPort, resp.StatusCode)
 	}
@@ -281,22 +283,24 @@ func updatePeers(ctx context.Context, desired []Peer, deletions []Peer) {
 	// https://www.haproxy.com/documentation/dataplaneapi/community/#put-/services/haproxy/transactions/-id-
 	req, err = http.NewRequestWithContext(ctx, "PUT", fmt.Sprintf("http://"+*dataPlaneAPIAddress+"/v2/services/haproxy/transactions/%s", transactionID), nil)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting up HTTP request for committing transaction: %w", err)
 	}
 	req.SetBasicAuth(*user, *password)
 	req.Header.Add("Content-Type", "application/json")
 
 	resp, err = client.Do(req)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error setting up HTTP client for committing transaction: %w", err)
 	}
 	body, err = ioutil.ReadAll(resp.Body)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("error reading HTTP response for committing transaction: %w", err)
 	}
 	resultMap = make(map[string]interface{})
 	if err := json.Unmarshal(body, &resultMap); err != nil {
-		panic(err)
+		return fmt.Errorf("error unmarshalling HTTP response for committing transaction: %w", err)
 	}
 	klog.Infof("transaction: COMMIT transaction_id='%s', status_code=%d, result=%#v\n", transactionID, resp.StatusCode, resultMap)
+
+	return nil
 }

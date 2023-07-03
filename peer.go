@@ -5,7 +5,7 @@ type Peer struct {
 	hostname  string
 }
 
-// Difference returns the Peers in `a` that aren't in `b`.
+// difference returns the Peers in `a` that aren't in `b`.
 func difference(a []Peer, b []Peer) []Peer {
 	mb := make(map[string]struct{}, len(b))
 	for _, x := range b {

@@ -7,7 +7,7 @@ then
   address="http://127.0.0.1:8080"
 fi
 
-declare -A tests=( ["333333"]="" ["figdfog"]="" ["ae23e3d"]="" ["dagfg"]="" )
+tests=( ["333333"]="" ["figdfog"]="" ["ae23e3d"]="" ["dagfg"]="" )
 
 echo "> Getting some urls keys assigned to a sticky backend.."
 for k in "${!tests[@]}"
@@ -30,7 +30,7 @@ do
       successes=$((successes-1))
     fi
   done
-  echo "$successes/$n_tests tests right"
+  echo "$successes/$n_tests tests succeded"
   sleep 3
 done
 

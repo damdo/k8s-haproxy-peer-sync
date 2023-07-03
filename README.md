@@ -1,5 +1,12 @@
 ## k8s-haproxy-peer-sync
 
+#### WARNING:
+This is a POC developed during an hackathon and thus this is not to be considered high quality code, nor production ready.
+This is just a demonstration and may break unexpectedly, do not use in production as is.
+Not actively maintained or used.
+
+### intro
+
 A process to be run as a sidecar container inside an HAProxy multi-replicas Deployment/DaemonSet/StatefulSet (in Kubernetes) to keep the HAProxy `peers` section in sync at runtime.
 
 Useful for keeping in-memory `stick-table`s in sync (through peers) across multiple HAProxy pod replicas.
@@ -11,7 +18,7 @@ Robust to scale-in/outs.
 0) Create a cluster where to deploy it.
    As an example we'll use a [k8s kind](https://kind.sigs.k8s.io/) cluster here:
    ```
-   kind create cluster --name "kind" --config cluster.yaml
+   kind create cluster --name "kind" --config examples/cluster.yaml
    ```
 0) Apply the Example sticky backend
    ```
@@ -32,7 +39,7 @@ Robust to scale-in/outs.
 
 Profit!
 
-### debug
+### test
 
 Run some e2e tests against the kind cluster setup:
 ```
@@ -59,9 +66,6 @@ You can live debug the haproxy stick-table via:
 # remember to change the table name if you change it in the config
 kubectl --context kind-kind logs -f haproxy-<REPLICA-NAME> -c haproxy -- sh -c 'apk add socat && watch -- "echo "show table back-session" | socat unix:/tmp/admin.sock -"'
 ```
-
-### architecture
-TODO
 
 ### TODO
 - [ ] compose url string properly
